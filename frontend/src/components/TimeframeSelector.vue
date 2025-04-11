@@ -2,7 +2,7 @@
   <div class="timespan-selector">
     <span>Timespan: </span>
     <button
-      v-for="period in timespans"
+      v-for="period in timeframes"
       :key="period.value"
       :class="['timespan-btn', { active: modelValue === period.value }]"
       @click="$emit('update:modelValue', period.value)"
@@ -13,7 +13,7 @@
 </template>
 
 <script setup>
-import { timespans } from "../utils/chartUtils.js";
+import { timeframes } from "../utils/chartUtils.js";
 
 defineProps({
   modelValue: {
@@ -42,6 +42,7 @@ defineEmits(["update:modelValue"]);
   cursor: pointer;
   font-size: 14px;
   transition: all 0.2s ease;
+  color: #333;
 }
 
 .timespan-btn:hover {

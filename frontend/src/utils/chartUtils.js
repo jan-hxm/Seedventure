@@ -7,143 +7,57 @@ export const formatPrice = (price) => {
   return `$${price.toFixed(2)}`;
 };
 
-// Cache for timespan filter calculations
-const filterCache = {
-  timespan: null,
+// Cache for candle data
+const candleCache = {
+  timeframe: null,
   timestamp: 0,
   result: [],
 };
 
 /**
- * Filter candle data based on selected timespan
- * @param {Array} allCandles - All candle data
- * @param {String} timespan - Selected timespan (1h, 1d, 1w, 1m, all)
- * @returns {Array} Filtered candle data
+ * Process candles from the backend, with optional light filtering for specific views
+ * @param {Array} candles - Candles from the backend
+ * @param {String} timeframe - Timeframe of the candles (1m, 5m, 15m, 1h, 4h, 1d)
+ * @returns {Array} Processed candle data
  */
-export const filterCandlesByTimespan = (allCandles, timespan) => {
-  if (!allCandles || allCandles.length === 0) return [];
+export const processCandles = (candles, timeframe) => {
+  if (!candles || candles.length === 0) return [];
 
   const now = Date.now();
 
-  // Check if we can use cached results (if same timespan and < 5 sec old)
-  if (timespan === filterCache.timespan && now - filterCache.timestamp < 5000) {
-    return filterCache.result;
-  }
+  // For large datasets, we might want to sample the data
+  // This is a performance optimization only - the backend already has the right resolution
+  let processedCandles = candles;
 
-  // Limit the number of candles to process for better performance
-  const maxCandles = 5000;
-  const candles =
-    allCandles.length > maxCandles ? allCandles.slice(-maxCandles) : allCandles;
-
-  let filteredCandles = [];
-
-  // Apply filter based on timespan
-  switch (timespan) {
-    case "1h":
-      // Last hour - use efficient filtering
-      filteredCandles = filterByTimeThreshold(candles, now - 60 * 60 * 1000);
-      break;
-    case "1d":
-      // Last day
-      filteredCandles = filterByTimeThreshold(
-        candles,
-        now - 24 * 60 * 60 * 1000
-      );
-      break;
-    case "1w":
-      // Last week - sample data for performance
-      filteredCandles = sampleDataForTimespan(
-        filterByTimeThreshold(candles, now - 7 * 24 * 60 * 60 * 1000),
-        timespan
-      );
-      break;
-    case "1m":
-      // Last month - sample data for performance
-      filteredCandles = sampleDataForTimespan(
-        filterByTimeThreshold(candles, now - 30 * 24 * 60 * 60 * 1000),
-        timespan
-      );
-      break;
-    case "all":
-    default:
-      // All data - sample for large datasets
-      filteredCandles = sampleDataForTimespan(candles, timespan);
-      break;
-  }
-
-  // Ensure we have at least some data to display
-  if (filteredCandles.length === 0 && candles.length > 0) {
-    // If no data in the timespan, show the most recent candles
-    filteredCandles = candles.slice(-10);
+  if (candles.length > 100) {
+    // Only sample for extremely large datasets
+    processedCandles = sampleLargeDataset(candles);
   }
 
   // Update cache
-  filterCache.timespan = timespan;
-  filterCache.timestamp = now;
-  filterCache.result = filteredCandles;
+  candleCache.timeframe = timeframe;
+  candleCache.timestamp = now;
+  candleCache.result = processedCandles;
 
-  return filteredCandles;
+  return processedCandles;
 };
 
 /**
- * Efficiently filter candles by timestamp threshold
- * @param {Array} candles - Candles to filter
- * @param {Number} threshold - Timestamp threshold
- * @returns {Array} Filtered candles
- */
-function filterByTimeThreshold(candles, threshold) {
-  // Use binary search to find starting index for better performance
-  let start = 0;
-  let end = candles.length - 1;
-  let mid = 0;
-
-  // Only do binary search if we have a sorted array with enough elements
-  if (candles.length > 100) {
-    while (start <= end) {
-      mid = Math.floor((start + end) / 2);
-
-      if (candles[mid].x < threshold) {
-        start = mid + 1;
-      } else {
-        end = mid - 1;
-      }
-    }
-
-    // Return slice from the found position
-    return candles.slice(Math.max(0, start - 1));
-  }
-
-  // For smaller arrays, regular filter is fine
-  return candles.filter((candle) => candle.x >= threshold);
-}
-
-/**
- * Sample data to reduce points for better performance
+ * Sample large datasets for better client-side performance
  * @param {Array} candles - Candles to sample
- * @param {String} timespan - Current timespan
  * @returns {Array} Sampled candles
  */
-function sampleDataForTimespan(candles, timespan) {
-  // For small datasets, no sampling needed
-  if (candles.length < 100) return candles;
-
-  // Determine sample rate based on timespan and data size
-  let sampleRate = 1;
-
-  if (timespan === "all") {
-    if (candles.length > 1000) sampleRate = Math.floor(candles.length / 500);
-  } else if (timespan === "1m") {
-    if (candles.length > 500) sampleRate = Math.floor(candles.length / 300);
-  } else if (timespan === "1w") {
-    if (candles.length > 300) sampleRate = Math.floor(candles.length / 200);
-  }
-
+function sampleLargeDataset(candles) {
   // Always include the most recent candles
-  const recentCount = 20;
+  const recentCount = 100; // Keep more recent candles for accuracy
   const recentCandles = candles.slice(-recentCount);
 
-  // Sample older candles
+  // Sample older candles if we have a very large dataset
+  if (candles.length <= recentCount) return candles;
+
   const olderCandles = candles.slice(0, -recentCount);
+  const sampleRate = Math.max(1, Math.floor(olderCandles.length / 500));
+
   const sampledOlderCandles =
     sampleRate > 1
       ? olderCandles.filter((_, i) => i % sampleRate === 0)
@@ -154,12 +68,12 @@ function sampleDataForTimespan(candles, timespan) {
 }
 
 /**
- * Get optimized chart options
- * @param {String} timespan - Selected timespan
- * @param {Array} data - Filtered data for the timespan
+ * Get chart options for the selected timeframe
+ * @param {String} timeframe - Selected timeframe (1m, 5m, 15m, 1h, 4h, 1d)
+ * @param {Array} data - Candle data
  * @returns {Object} Chart options
  */
-export const getChartOptionsForTimespan = (timespan, data = []) => {
+export const getChartOptions = (timeframe, data = []) => {
   // Base chart options - use minimal animations for better performance
   const baseOptions = {
     chart: {
@@ -190,17 +104,13 @@ export const getChartOptionsForTimespan = (timespan, data = []) => {
         enabled: true,
       },
     },
-    title: {
-      text: `Live Crypto Price Movement (${timespan.toUpperCase()})`,
-      align: "center",
-    },
     xaxis: {
       type: "datetime",
       labels: {
-        formatter: getFormatterForTimespan(timespan),
+        formatter: getFormatterForTimeframe(timeframe),
         datetimeUTC: false,
       },
-      tickAmount: getTickAmountForTimespan(timespan, data),
+      tickAmount: getTickAmount(timeframe, data),
     },
     yaxis: {
       tooltip: { enabled: true },
@@ -223,7 +133,7 @@ export const getChartOptionsForTimespan = (timespan, data = []) => {
     tooltip: {
       theme: "dark",
       x: {
-        format: "MMM dd, yyyy HH:mm",
+        format: getTooltipFormat(timeframe),
       },
       y: {
         formatter: function (val) {
@@ -256,8 +166,8 @@ export const getChartOptionsForTimespan = (timespan, data = []) => {
 
   // Only add time range if we have data
   if (data.length > 0) {
-    // Get appropriate time range
-    const timeRange = getTimeRangeForData(data, timespan);
+    // Calculate appropriate time range with padding
+    const timeRange = getTimeRange(data, timeframe);
     if (timeRange) {
       baseOptions.xaxis = {
         ...baseOptions.xaxis,
@@ -271,12 +181,21 @@ export const getChartOptionsForTimespan = (timespan, data = []) => {
 };
 
 /**
- * Get appropriate X-axis formatter for timespan
- * @param {String} timespan - Selected timespan
+ * Get appropriate X-axis formatter for timeframe
+ * @param {String} timeframe - Selected timeframe
  * @returns {Function} Formatter function
  */
-function getFormatterForTimespan(timespan) {
-  switch (timespan) {
+function getFormatterForTimeframe(timeframe) {
+  switch (timeframe) {
+    case "1m":
+    case "5m":
+      return function (val) {
+        return new Date(val).toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      };
+    case "15m":
     case "1h":
       return function (val) {
         return new Date(val).toLocaleTimeString("en-US", {
@@ -284,20 +203,19 @@ function getFormatterForTimespan(timespan) {
           minute: "2-digit",
         });
       };
-    case "1d":
-      return function (val) {
-        return new Date(val).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-      };
-    case "1w":
-    case "1m":
+    case "4h":
       return function (val) {
         return new Date(val).toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           hour: "2-digit",
+        });
+      };
+    case "1d":
+      return function (val) {
+        return new Date(val).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
         });
       };
     default:
@@ -311,12 +229,33 @@ function getFormatterForTimespan(timespan) {
 }
 
 /**
- * Calculate appropriate tick amount based on timespan and data size
- * @param {String} timespan - Selected timespan
+ * Get tooltip date format for timeframe
+ * @param {String} timeframe - Selected timeframe
+ * @returns {String} Date format string
+ */
+function getTooltipFormat(timeframe) {
+  switch (timeframe) {
+    case "1m":
+    case "5m":
+    case "15m":
+      return "MMM dd, yyyy HH:mm:ss";
+    case "1h":
+    case "4h":
+      return "MMM dd, yyyy HH:mm";
+    case "1d":
+      return "MMM dd, yyyy";
+    default:
+      return "MMM dd, yyyy";
+  }
+}
+
+/**
+ * Calculate appropriate tick amount based on timeframe and data size
+ * @param {String} timeframe - Selected timeframe
  * @param {Array} data - Chart data
  * @returns {Number} Tick amount
  */
-function getTickAmountForTimespan(timespan, data) {
+function getTickAmount(timeframe, data) {
   // Default to 6 ticks
   let tickAmount = 6;
 
@@ -325,8 +264,8 @@ function getTickAmountForTimespan(timespan, data) {
     return 5;
   }
 
-  // For hourly view, use more ticks
-  if (timespan === "1h") {
+  // For minute-level timeframes, use more ticks
+  if (timeframe === "1m" || timeframe === "5m") {
     return 8;
   }
 
@@ -336,10 +275,10 @@ function getTickAmountForTimespan(timespan, data) {
 /**
  * Calculate appropriate time range for chart
  * @param {Array} data - Chart data
- * @param {String} timespan - Selected timespan
+ * @param {String} timeframe - Selected timeframe
  * @returns {Object|null} Time range min and max
  */
-function getTimeRangeForData(data, timespan) {
+function getTimeRange(data, timeframe) {
   if (!data || data.length === 0) return null;
 
   // Calculate min and max times
@@ -347,20 +286,25 @@ function getTimeRangeForData(data, timespan) {
   let minTime = Math.min(...times);
   let maxTime = Math.max(...times);
 
-  // Add padding based on timespan
+  // Add padding based on timeframe
   let padding = 0;
-  switch (timespan) {
-    case "1h":
+  switch (timeframe) {
+    case "1m":
       padding = 60 * 1000; // 1 minute
       break;
-    case "1d":
+    case "5m":
+      padding = 5 * 60 * 1000; // 5 minutes
+      break;
+    case "15m":
       padding = 15 * 60 * 1000; // 15 minutes
       break;
-    case "1w":
-      padding = 6 * 60 * 60 * 1000; // 6 hours
+    case "1h":
+      padding = 60 * 60 * 1000; // 1 hour
       break;
-    case "1m":
-    case "all":
+    case "4h":
+      padding = 4 * 60 * 60 * 1000; // 4 hours
+      break;
+    case "1d":
       padding = 24 * 60 * 60 * 1000; // 1 day
       break;
   }
@@ -409,11 +353,12 @@ export const calculatePriceChange = (candle) => {
   };
 };
 
-// Available timespan options
-export const timespans = [
-  { label: "1H", value: "1h" },
-  { label: "1D", value: "1d" },
-  { label: "1W", value: "1w" },
-  { label: "1M", value: "1m" },
-  { label: "All", value: "all" },
+// Available timeframes directly from the backend
+export const timeframes = [
+  { label: "1 Min", value: "1m" },
+  { label: "5 Min", value: "5m" },
+  { label: "15 Min", value: "15m" },
+  { label: "1 Hour", value: "1h" },
+  { label: "4 Hour", value: "4h" },
+  { label: "1 Day", value: "1d" },
 ];

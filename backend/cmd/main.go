@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
 
 	"server/internal/api"
@@ -18,18 +19,24 @@ func main() {
 	// Seed the random number generator
 	rand.Seed(time.Now().UnixNano())
 
-	// Create and initialize price service
-	priceService := service.NewPriceService()
+	// Create data directory if it doesn't exist
+	dataDir := "data"
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Fatalf("Failed to create data directory: %v", err)
+	}
 
-	// Try to load historical data from file, or generate if file doesn't exist
-	if err := priceService.LoadFromFile("price_history.json"); err != nil {
-		log.Println("Generating new historical data")
-		priceService.Initialize(5)
+	// Create and initialize price service
+	priceService := service.NewPriceService(dataDir)
+
+	// Try to load historical data from files
+	if err := priceService.LoadAllTimeFrames(); err != nil {
+		log.Println("Generating new historical data:", err)
+
+		// Generate 1 day of historical data
+		priceService.Initialize(1)
 
 		// Save the generated data
-		if err := priceService.SaveToFile("price_history.json"); err != nil {
-			log.Println("Error saving data:", err)
-		}
+		priceService.SaveAllTimeFrames()
 	}
 
 	// Set up router
@@ -38,9 +45,11 @@ func main() {
 	// Create a handler with the price service
 	priceHandler := api.NewPriceHandler(priceService)
 
-	// Define routes
+	// Define routes with timeframe support
 	r.HandleFunc("/api/prices/history", priceHandler.HandleHistoricalData).Methods("GET")
+	r.HandleFunc("/api/prices/timeframes", priceHandler.HandleAvailableTimeframes).Methods("GET")
 	r.HandleFunc("/api/prices/live", priceHandler.HandleWebsocket)
+	r.HandleFunc("/api/prices/live/{timeframe}", priceHandler.HandleWebsocketSubscribe)
 
 	// Set up CORS
 	corsMiddleware := handlers.CORS(
@@ -52,10 +61,10 @@ func main() {
 	// Start a new candle
 	priceService.StartNewCandle()
 
-	// Update current candle every 2 seconds, create new one every 10 seconds
+	// Update current candle every second, create new one every minute
 	go func() {
-		updateTicker := time.NewTicker(2 * time.Second)
-		candleTicker := time.NewTicker(10 * time.Second)
+		updateTicker := time.NewTicker(time.Second)
+		candleTicker := time.NewTicker(time.Minute)
 		defer updateTicker.Stop()
 		defer candleTicker.Stop()
 

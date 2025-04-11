@@ -10,136 +10,130 @@
       :series="[{ data: chartData }]"
       @mounted="onChartMounted"
     ></apexchart>
-    <div v-else class="loading">Loading data from server...</div>
+    <div v-else class="loading">
+      {{ isLoading ? "Loading data from server..." : "No data available" }}
+    </div>
   </div>
 </template>
 
-<script>
-// Use normal script setup to have better control over reactivity
+<script setup>
 import { ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
-import { getChartOptionsForTimespan } from "../utils/chartUtils.js";
+import { getChartOptions, processCandles } from "../utils/chartUtils.js";
 
-export default {
-  props: {
-    candles: {
-      type: Array,
-      required: true,
-    },
-    timespan: {
-      type: String,
-      required: true,
-    },
-    isLoading: {
-      type: Boolean,
-      default: false,
-    },
+// Props definition
+const props = defineProps({
+  candles: {
+    type: Array,
+    required: true,
   },
+  timeframe: {
+    type: String,
+    required: true,
+  },
+  isLoading: {
+    type: Boolean,
+    default: false,
+  },
+});
 
-  setup(props) {
-    // Chart references
-    const apexChart = ref(null);
-    const chart = ref(null);
+// Chart references
+const apexChart = ref(null);
+const chart = ref(null);
 
-    // Use refs for data to control reactivity better
-    const chartData = ref([]);
-    const chartOptions = ref(getChartOptionsForTimespan(props.timespan));
+// Use refs for data to control reactivity better
+const chartData = ref([]);
+const chartOptions = ref(getChartOptions(props.timeframe));
 
-    // Debounce flag to prevent too frequent updates
-    let debounceTimer = null;
+// Debounce flag to prevent too frequent updates
+let debounceTimer = null;
 
-    // Create chart data - only run this when necessary
-    const updateChartData = () => {
-      // Cancel any pending updates
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
+// Create chart data - only run this when necessary
+const updateChartData = () => {
+  // Cancel any pending updates
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
+
+  // Debounce the update
+  debounceTimer = setTimeout(() => {
+    try {
+      // Process candles - this might include sampling for large datasets
+      chartData.value = processCandles(props.candles, props.timeframe);
+
+      // Update chart options if chart is mounted
+      if (chart.value) {
+        updateChartOptions();
       }
+    } catch (error) {
+      console.error("Error updating chart data:", error);
+    }
+  }, 100); // Small delay to batch updates
+};
 
-      // Debounce the update
-      debounceTimer = setTimeout(() => {
-        // No need to create a deep reactive chain, just transform the data
-        chartData.value = props.candles.map((candle) => ({
-          x: candle.x,
-          y: candle.y,
-        }));
+// Update chart options - use a dedicated function
+const updateChartOptions = async () => {
+  try {
+    if (!chart.value || !chart.value.chart) return;
 
-        // Update chart options if chart is mounted
-        if (chart.value) {
-          updateChartOptions();
-        }
-      }, 50); // Small delay to batch updates
-    };
+    const newOptions = getChartOptions(props.timeframe, chartData.value);
 
-    // Update chart options - use a dedicated function
-    const updateChartOptions = () => {
-      if (!chart.value || !chart.value.chart) return;
+    // Only update if we need to
+    chart.value.updateOptions(newOptions, false, true, true);
+  } catch (error) {
+    console.error("Error updating chart options:", error);
+  }
+};
 
-      const newOptions = getChartOptionsForTimespan(
-        props.timespan,
-        chartData.value
-      );
+// Watch for candles changes, but only if reference changes
+watch(
+  () => props.candles,
+  (newCandles) => {
+    updateChartData();
+  }
+);
 
-      // Only update if we need to
-      chart.value.updateOptions(newOptions, false, true, true);
-    };
+// Watch for timeframe changes
+watch(
+  () => props.timeframe,
+  (newTimeframe) => {
+    try {
+      if (!chart.value) return;
 
-    // Watch for candles changes, but only if reference changes
-    watch(
-      () => props.candles,
-      (newCandles) => {
-        updateChartData();
-      }
-    );
+      // Update options first
+      chartOptions.value = getChartOptions(newTimeframe, chartData.value);
 
-    // Watch for timespan changes
-    watch(
-      () => props.timespan,
-      (newTimespan) => {
-        if (!chart.value) return;
-
-        // Update options first
-        chartOptions.value = getChartOptionsForTimespan(
-          newTimespan,
-          chartData.value
-        );
-
-        // Then update the chart
-        nextTick(() => {
-          updateChartOptions();
-        });
-      }
-    );
-
-    // Initialize chart data when mounted
-    onMounted(() => {
-      updateChartData();
-    });
-
-    // Save chart reference when chart is mounted
-    const onChartMounted = (chartContext) => {
-      chart.value = chartContext;
-
-      // Initial update with proper data
+      // Then update the chart
       nextTick(() => {
         updateChartOptions();
       });
-    };
+    } catch (error) {
+      console.error("Error handling timeframe change:", error);
+    }
+  }
+);
 
-    // Clean up when component is unmounted
-    onBeforeUnmount(() => {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-      }
-    });
+// Initialize chart data when mounted
+onMounted(() => {
+  updateChartData();
+});
 
-    return {
-      apexChart,
-      chartData,
-      chartOptions,
-      onChartMounted,
-    };
-  },
+// Save chart reference when chart is mounted
+const onChartMounted = (chartContext) => {
+  chart.value = chartContext;
+
+  // Initial update with proper data
+  nextTick(() => {
+    updateChartOptions();
+  });
 };
+
+// Clean up when component is unmounted
+onBeforeUnmount(() => {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+});
 </script>
 
 <style scoped>
@@ -149,6 +143,7 @@ export default {
   border-radius: 4px;
   overflow: hidden;
   background-color: #f9f9f9;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .loading {
@@ -157,5 +152,6 @@ export default {
   justify-content: center;
   height: 100%;
   color: #666;
+  font-size: 16px;
 }
 </style>

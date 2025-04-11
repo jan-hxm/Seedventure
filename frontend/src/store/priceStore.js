@@ -1,21 +1,24 @@
-import { reactive, readonly, shallowRef } from "vue";
+import { reactive, shallowRef } from "vue";
 import {
   fetchHistoricalData,
   connectWebSocket,
   disconnectWebSocket,
+  changeTimeframe as wsChangeTimeframe,
+  fetchAvailableTimeframes,
 } from "../services/priceService.js";
 import {
-  filterCandlesByTimespan,
+  processCandles,
   calculatePriceChange,
+  timeframes,
 } from "../utils/chartUtils.js";
 
 // Use shallowRef for large arrays to prevent deep reactivity
-const allCandles = shallowRef([]);
-const filteredCandles = shallowRef([]);
+const candles = shallowRef([]);
 
 // Only make UI state reactive, not the entire data set
 const state = reactive({
-  selectedTimespan: "1h",
+  selectedTimeframe: "1m", // Default to 1-minute candles
+  availableTimeframes: [],
   connectionStatus: "Disconnected",
   dataInfo: "No data loaded",
   currentPrice: "$0.00",
@@ -31,25 +34,50 @@ let ws = null;
 // Actions
 const actions = {
   /**
-   * Set the selected timespan and filter data
+   * Set the selected timeframe and load data
    */
-  setTimespan(timespan) {
-    state.selectedTimespan = timespan;
+  async setTimeframe(timeframe) {
+    // Only change if different
+    if (timeframe === state.selectedTimeframe) return;
 
-    // Use setTimeout to avoid blocking the UI thread
-    setTimeout(() => {
-      filteredCandles.value = filterCandlesByTimespan(
-        allCandles.value,
-        timespan
-      );
-    }, 0);
+    const oldTimeframe = state.selectedTimeframe;
+    state.selectedTimeframe = timeframe;
+
+    // Update current WebSocket if connected
+    if (state.connectionStatus === "Connected") {
+      const success = wsChangeTimeframe(timeframe);
+      if (!success) {
+        // If changing timeframe failed, reconnect with new timeframe
+        actions.disconnect();
+        actions.connectToLiveData();
+      }
+    }
+
+    // Always reload data when timeframe changes
+    await actions.loadHistoricalData();
   },
 
   /**
-   * Get the filtered candles (for components)
+   * Load available timeframes from API
    */
-  getFilteredCandles() {
-    return filteredCandles.value;
+  async loadAvailableTimeframes() {
+    try {
+      const availableTimeframes = await fetchAvailableTimeframes();
+      state.availableTimeframes = availableTimeframes;
+      return availableTimeframes;
+    } catch (error) {
+      console.error("Failed to load available timeframes:", error);
+      // Fall back to default timeframes from chartUtils
+      state.availableTimeframes = timeframes.map((tf) => tf.value);
+      return state.availableTimeframes;
+    }
+  },
+
+  /**
+   * Get the candles for components
+   */
+  getCandles() {
+    return candles.value;
   },
 
   /**
@@ -61,40 +89,37 @@ const actions = {
     state.error = null;
 
     try {
+      // Calculate appropriate limit based on timeframe
+      const limit = calculateLimitForTimeframe(state.selectedTimeframe);
+
       const data = await fetchHistoricalData(
         // Success callback
         (formattedData) => {
-          // Use batch updates to reduce reactivity overhead
-          allCandles.value = formattedData;
+          // Use shallowRef for better performance
+          candles.value = formattedData;
 
-          // Apply timespan filter - non-blocking
-          setTimeout(() => {
-            filteredCandles.value = filterCandlesByTimespan(
-              formattedData,
-              state.selectedTimespan
-            );
+          // Update UI state
+          state.isLoading = false;
+          state.dataInfo = `Loaded ${formattedData.length} candles (${state.selectedTimeframe})`;
 
-            // Update UI state
-            state.isLoading = false;
-            state.dataInfo = `Loaded ${formattedData.length} historical candles`;
+          // Update price info based on the latest candle if available
+          if (formattedData.length > 0) {
+            const latestCandle = formattedData[formattedData.length - 1];
+            const priceInfo = calculatePriceChange(latestCandle);
 
-            // Update price info based on the latest candle if available
-            if (formattedData.length > 0) {
-              const latestCandle = formattedData[formattedData.length - 1];
-              const priceInfo = calculatePriceChange(latestCandle);
-
-              state.currentPrice = priceInfo.currentPrice;
-              state.priceChange = priceInfo.priceChange;
-              state.isPositiveChange = priceInfo.isPositive;
-            }
-          }, 0);
+            state.currentPrice = priceInfo.currentPrice;
+            state.priceChange = priceInfo.priceChange;
+            state.isPositiveChange = priceInfo.isPositive;
+          }
         },
         // Error callback
         (error) => {
           state.error = error.message || "Failed to load historical data";
           state.dataInfo = "Error loading historical data";
           state.isLoading = false;
-        }
+        },
+        state.selectedTimeframe,
+        limit
       );
 
       return data;
@@ -112,67 +137,104 @@ const actions = {
   connectToLiveData() {
     state.connectionStatus = "Connecting...";
 
-    ws = connectWebSocket({
-      onOpen: () => {
-        state.connectionStatus = "Connected";
-      },
-      onMessage: (message) => {
-        const { type, candle } = message;
+    ws = connectWebSocket(
+      {
+        onOpen: () => {
+          state.connectionStatus = "Connected";
+        },
+        onMessage: (message) => {
+          // The message can now be either an UpdateMessage or a TimeFrameData response
 
-        // Format the candle data for ApexCharts
-        const formattedCandle = {
-          x: candle.x,
-          y: candle.y,
-        };
+          // Check if this is a candle update
+          if (
+            message.type &&
+            (message.type === "new" || message.type === "update")
+          ) {
+            const { type, candle, timeFrame } = message;
 
-        // Create a new array only when necessary, using non-reactive operations
-        const currentCandles = [...allCandles.value];
+            // Only process updates for the selected timeframe
+            if (timeFrame === state.selectedTimeframe) {
+              // Format the candle data for ApexCharts
+              const formattedCandle = {
+                x: candle.x,
+                y: candle.y,
+              };
 
-        // Update an existing candle or add a new one
-        if (type === "update") {
-          const existingIndex = currentCandles.findIndex(
-            (item) => item.x === candle.x
-          );
+              // Create a new array only when necessary
+              const currentCandles = [...candles.value];
 
-          if (existingIndex >= 0) {
-            // Update existing candle
-            currentCandles[existingIndex] = formattedCandle;
-          } else {
-            // Add new candle if not found
-            currentCandles.push(formattedCandle);
+              // Update an existing candle or add a new one
+              if (type === "update") {
+                const existingIndex = currentCandles.findIndex(
+                  (item) => item.x === candle.x
+                );
+
+                if (existingIndex >= 0) {
+                  // Update existing candle
+                  currentCandles[existingIndex] = formattedCandle;
+                } else {
+                  // Add new candle if not found
+                  currentCandles.push(formattedCandle);
+                }
+              } else if (type === "new") {
+                // Add new candle
+                currentCandles.push(formattedCandle);
+              }
+
+              // Batch update the candles reference to reduce reactivity overhead
+              candles.value = currentCandles;
+
+              // Update price info with the latest candle
+              const priceInfo = calculatePriceChange(formattedCandle);
+              state.currentPrice = priceInfo.currentPrice;
+              state.priceChange = priceInfo.priceChange;
+              state.isPositiveChange = priceInfo.isPositive;
+
+              // Update data info
+              state.dataInfo = `Last update: ${new Date().toLocaleTimeString()} (${
+                state.selectedTimeframe
+              })`;
+            }
           }
-        } else if (type === "new") {
-          // Add new candle
-          currentCandles.push(formattedCandle);
-        }
+          // Check if this is a timeframe data response (from changing timeframes)
+          else if (message.timeFrame && message.candles) {
+            // This is a response to changing timeframes
+            const { timeFrame, candles: newCandles } = message;
 
-        // Batch update the allCandles reference to reduce reactivity overhead
-        allCandles.value = currentCandles;
+            // Only process if this matches our current timeframe
+            if (timeFrame === state.selectedTimeframe) {
+              // Format the candles for ApexCharts
+              const formattedCandles = newCandles.map((candle) => ({
+                x: candle.x,
+                y: candle.y,
+              }));
 
-        // Re-apply timespan filter in a non-blocking way
-        setTimeout(() => {
-          filteredCandles.value = filterCandlesByTimespan(
-            currentCandles,
-            state.selectedTimespan
-          );
-        }, 0);
+              // Update candles
+              candles.value = formattedCandles;
 
-        // Update price info with the latest candle
-        const priceInfo = calculatePriceChange(formattedCandle);
-        state.currentPrice = priceInfo.currentPrice;
-        state.priceChange = priceInfo.priceChange;
-        state.isPositiveChange = priceInfo.isPositive;
+              // Update UI with latest candle if available
+              if (formattedCandles.length > 0) {
+                const latestCandle =
+                  formattedCandles[formattedCandles.length - 1];
+                const priceInfo = calculatePriceChange(latestCandle);
+                state.currentPrice = priceInfo.currentPrice;
+                state.priceChange = priceInfo.priceChange;
+                state.isPositiveChange = priceInfo.isPositive;
+              }
 
-        // Update data info
-        state.dataInfo = `Last update: ${new Date().toLocaleTimeString()}`;
+              state.dataInfo = `Loaded ${formattedCandles.length} candles for timeframe ${timeFrame}`;
+            }
+          }
+        },
+        onClose: () => {
+          state.connectionStatus = "Disconnected";
+        },
+        onError: (error) => {
+          state.error = error.message || "WebSocket connection error";
+        },
       },
-      onClose: () => {
-        state.connectionStatus = "Disconnected";
-      },
-      onError: (error) => {
-        state.error = error.message || "WebSocket connection error";
-      },
-    });
+      state.selectedTimeframe
+    );
   },
 
   /**
@@ -182,10 +244,44 @@ const actions = {
     disconnectWebSocket();
     state.connectionStatus = "Disconnected";
   },
+
+  /**
+   * Process candles for display (with optimizations)
+   */
+  processCandles() {
+    return processCandles(candles.value, state.selectedTimeframe);
+  },
 };
+
+/**
+ * Calculate appropriate limit based on timeframe
+ * @param {String} timeframe - Selected timeframe
+ * @returns {Number} Limit value
+ */
+function calculateLimitForTimeframe(timeframe) {
+  switch (timeframe) {
+    case "1m":
+      return 120; // 2 hours of 1-minute candles
+    case "5m":
+      return 144; // 12 hours of 5-minute candles
+    case "15m":
+      return 192; // 2 days of 15-minute candles
+    case "1h":
+      return 168; // 7 days of hourly candles
+    case "4h":
+      return 180; // 30 days of 4-hour candles
+    case "1d":
+      return 365; // 1 year of daily candles
+    default:
+      return 100; // Default limit
+  }
+}
+
+// Initialize the store when it's created
+actions.loadAvailableTimeframes();
 
 // Create and export the store
 export default {
-  state: readonly(state),
+  state: state,
   ...actions,
 };

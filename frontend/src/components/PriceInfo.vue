@@ -47,7 +47,12 @@ const priceClass = computed(() => {
 }
 
 .current-price {
+  color: #333;
   font-weight: bold;
+}
+
+.price-change {
+  color: #333;
 }
 
 .price-up {

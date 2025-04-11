@@ -1,6 +1,6 @@
 <template>
   <div class="candlestick-chart-container">
-    <h2>Live Crypto Price Chart</h2>
+    <h2>Live Price Chart</h2>
 
     <!-- Connection Status Component -->
     <ConnectionStatus
@@ -8,13 +8,13 @@
       :dataInfo="priceStore.state.dataInfo"
     />
 
-    <!-- Timespan Selector Component -->
-    <TimespanSelector v-model="selectedTimespan" />
+    <!-- Timeframe Selector Component -->
+    <TimeframeSelector v-model="selectedTimeframe" />
 
     <!-- Chart Container Component -->
     <ChartContainer
-      :candles="priceStore.getFilteredCandles()"
-      :timespan="selectedTimespan"
+      :candles="candles"
+      :timeframe="selectedTimeframe"
       :isLoading="priceStore.state.isLoading"
     />
 
@@ -29,9 +29,16 @@
 
 <script>
 // Use normal script tag instead of setup for better control
-import { ref, onMounted, onBeforeUnmount, watch, onUnmounted } from "vue";
+import {
+  ref,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+  onUnmounted,
+} from "vue";
 import ConnectionStatus from "./ConnectionStatus.vue";
-import TimespanSelector from "./TimespanSelector.vue";
+import TimeframeSelector from "./TimeframeSelector.vue";
 import ChartContainer from "./ChartContainer.vue";
 import PriceInfo from "./PriceInfo.vue";
 import priceStore from "../store/priceStore.js";
@@ -39,35 +46,66 @@ import priceStore from "../store/priceStore.js";
 export default {
   components: {
     ConnectionStatus,
-    TimespanSelector,
+    TimeframeSelector,
     ChartContainer,
     PriceInfo,
   },
 
   setup() {
-    // Local reference to timespan for v-model binding
-    const selectedTimespan = ref(priceStore.state.selectedTimespan);
-    let timespanWatcher = null;
+    // Local reference to timeframe for v-model binding
+    const selectedTimeframe = ref(priceStore.state.selectedTimeframe);
+    let timeframeWatcher = null;
 
-    // Watch for local timespan changes and update store
+    // Create a computed property for candles to ensure reactivity
+    const candles = computed(() => {
+      try {
+        return priceStore.getCandles() || [];
+      } catch (error) {
+        console.error("Error getting candles:", error);
+        return [];
+      }
+    });
+
+    // Watch for local timeframe changes and update store
     onMounted(() => {
       // Set up watcher with a debounce
       let debounceTimer = null;
 
-      timespanWatcher = watch(selectedTimespan, (newValue) => {
+      timeframeWatcher = watch(selectedTimeframe, (newValue) => {
         if (debounceTimer) clearTimeout(debounceTimer);
 
-        debounceTimer = setTimeout(() => {
-          priceStore.setTimespan(newValue);
+        debounceTimer = setTimeout(async () => {
+          try {
+            // Set loading state
+            priceStore.state.isLoading = true;
+
+            // Change timeframe and wait for data
+            await priceStore.setTimeframe(newValue);
+          } catch (error) {
+            console.error("Error changing timeframe:", error);
+          }
         }, 100);
       });
 
-      // Load historical data first
-      priceStore.loadHistoricalData().then(() => {
-        // Then connect to WebSocket for real-time updates
-        priceStore.connectToLiveData();
-      });
+      // Initial setup
+      initializeData();
     });
+
+    // Initialize data
+    const initializeData = async () => {
+      try {
+        // Load available timeframes first
+        await priceStore.loadAvailableTimeframes();
+
+        // Then load historical data
+        await priceStore.loadHistoricalData();
+
+        // Finally connect to WebSocket for real-time updates
+        priceStore.connectToLiveData();
+      } catch (error) {
+        console.error("Error initializing data:", error);
+      }
+    };
 
     // Clean up when component is unmounted
     onBeforeUnmount(() => {
@@ -76,13 +114,14 @@ export default {
 
     // Remove watchers when component is unmounted
     onUnmounted(() => {
-      if (timespanWatcher) {
-        timespanWatcher(); // Stop the watcher
+      if (timeframeWatcher) {
+        timeframeWatcher(); // Stop the watcher
       }
     });
 
     return {
-      selectedTimespan,
+      selectedTimeframe,
+      candles,
       priceStore,
     };
   },
@@ -91,7 +130,7 @@ export default {
 
 <style scoped>
 .candlestick-chart-container {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 20px;
   background-color: #fff;
@@ -104,5 +143,17 @@ h2 {
   margin-bottom: 20px;
   text-align: center;
   color: #333;
+}
+
+@media (max-width: 768px) {
+  .candlestick-chart-container {
+    padding: 15px;
+    margin: 0 10px;
+  }
+
+  h2 {
+    font-size: 20px;
+    margin-bottom: 15px;
+  }
 }
 </style>
