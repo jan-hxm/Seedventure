@@ -1,4 +1,4 @@
-import { reactive, shallowRef, computed } from "vue";
+import { reactive, shallowRef } from "vue";
 import {
   fetchHistoricalData,
   fetchAvailableTimeframes,
@@ -22,8 +22,8 @@ const state = reactive({
   availableTimeframes: [],
   connectionStatus: "Disconnected",
   dataInfo: "No data loaded",
-  currentPrice: "$0.00",
-  priceChange: "$0.00",
+  currentPrice: "0.00",
+  priceChange: "0.00",
   isPositiveChange: false,
   isLoading: true,
   error: null,

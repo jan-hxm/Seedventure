@@ -1,10 +1,10 @@
 <template>
   <div class="price-info">
     <div class="current-price">
-      Current Price: <span :class="priceClass">{{ currentPrice }}</span>
+      Current Price: <span :class="priceClass">${{ currentPrice }}</span>
     </div>
     <div class="price-change">
-      Change: <span :class="priceClass">{{ priceChange }}</span>
+      Change: <span :class="priceClass">${{ priceChange }}</span>
     </div>
   </div>
 </template>

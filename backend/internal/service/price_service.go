@@ -238,6 +238,11 @@ func (ps *PriceService) StartNewCandle() {
 	open := lastClose + change
 	open = math.Round(open*100) / 100
 
+	// Minimum price to avoid zero
+	if open < 0.01 {
+		open = 0.01
+	}
+
 	// Create new candle with only open price initially
 	now := time.Now()
 	timestamp := models.TimeFrame1Min.NormalizeTimestamp(now.Unix() * 1000)
@@ -287,6 +292,11 @@ func (ps *PriceService) UpdateCurrentCandle() {
 	change := (rand.Float64() - 0.5) * volatility
 	close := lastClose + change
 	close = math.Round(close*100) / 100
+
+	// Minimum price to avoid zero
+	if close < 0.01 {
+		close = 0.01
+	}
 
 	// Update high and low if needed
 	if close > high {

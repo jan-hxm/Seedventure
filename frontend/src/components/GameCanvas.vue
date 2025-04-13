@@ -2,15 +2,6 @@
   <div class="candlestick-chart-container">
     <h2>Live Price Chart</h2>
 
-    <!-- Connection Status Component -->
-    <ConnectionStatus
-      :status="priceStore.state.connectionStatus"
-      :dataInfo="priceStore.state.dataInfo"
-    />
-
-    <!-- Timeframe Selector Component -->
-    <TimeframeSelector v-model="selectedTimeframe" />
-
     <!-- Chart Container Component -->
     <ChartContainer
       :candles="candles"
@@ -24,9 +15,6 @@
       :priceChange="priceStore.state.priceChange"
       :isPositive="priceStore.state.isPositiveChange"
     />
-
-    <!-- Betting Component -->
-    <BettingComponent />
   </div>
 </template>
 
@@ -39,12 +27,9 @@ import {
   watch,
   onUnmounted,
 } from "vue";
-import ConnectionStatus from "./ConnectionStatus.vue";
-import TimeframeSelector from "./TimeframeSelector.vue";
 import ChartContainer from "./ChartContainer.vue";
 import PriceInfo from "./PriceInfo.vue";
 import priceStore from "../store/priceStore.js";
-import BettingComponent from "./BettingComponent.vue";
 
 // Local reference to timeframe for v-model binding
 const selectedTimeframe = ref(priceStore.state.selectedTimeframe);
@@ -117,6 +102,7 @@ onUnmounted(() => {
 <style scoped>
 .candlestick-chart-container {
   max-width: 1000px;
+  width: 800px;
   margin: 0 auto;
   padding: 20px;
   background-color: #fff;

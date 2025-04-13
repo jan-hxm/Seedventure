@@ -1,11 +1,13 @@
 <script setup>
+import BettingComponent from "./components/BettingComponent.vue";
 import GameCanvas from "./components/GameCanvas.vue";
 </script>
 
 <template>
-  <div>
-    <h1>Seedventure</h1>
+  <h1>Seedventure</h1>
+  <div class="main-container">
     <GameCanvas></GameCanvas>
+    <BettingComponent></BettingComponent>
   </div>
 </template>
 
@@ -21,5 +23,11 @@ import GameCanvas from "./components/GameCanvas.vue";
 }
 .logo.vue:hover {
   filter: drop-shadow(0 0 2em #42b883aa);
+}
+.main-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2em;
 }
 </style>

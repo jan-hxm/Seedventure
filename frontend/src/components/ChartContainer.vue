@@ -1,156 +1,345 @@
 <template>
-  <div class="chart-wrapper">
-    <apexchart
-      v-if="chartData.length > 0"
-      ref="apexChart"
-      type="candlestick"
-      height="450"
-      width="800"
-      :options="chartOptions"
-      :series="[{ data: chartData }]"
-      @mounted="onChartMounted"
-    ></apexchart>
-    <div v-else class="loading">
-      {{ isLoading ? "Loading data from server..." : "No data available" }}
+  <div class="chart-container">
+    <!-- Timeframe selection -->
+    <div class="timeframe-selector">
+      <button
+        v-for="tf in availableTimeframes"
+        :key="tf.value"
+        :class="{ active: selectedTimeframe === tf.value }"
+        @click="changeTimeframe(tf.value)"
+      >
+        {{ tf.label }}
+      </button>
+    </div>
+
+    <!-- Status indicator -->
+    <div class="connection-status" :class="connectionStatus.toLowerCase()">
+      {{ connectionStatus }}
+    </div>
+
+    <!-- Chart element -->
+    <div ref="chartRef" class="chart"></div>
+
+    <!-- Loading overlay -->
+    <div v-if="isLoading" class="loading-overlay">
+      <div class="spinner"></div>
+      <div>Loading...</div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
-import { getChartOptions } from "../utils/chartUtils.js";
+import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from "vue";
+import ApexCharts from "apexcharts";
+import priceStore from "../store/priceStore";
+import { getChartOptions, timeframes } from "../utils/chartUtils";
 
-// Props definition
-const props = defineProps({
-  candles: {
-    type: Array,
-    required: true,
-  },
-  timeframe: {
-    type: String,
-    required: true,
-  },
-  isLoading: {
-    type: Boolean,
-    default: false,
-  },
-});
+// Constants
+const MAX_CANDLES = 100;
 
-// Chart references
-const apexChart = ref(null);
-const chart = ref(null);
+// Reference to chart DOM element and ApexCharts instance
+const chartRef = ref(null);
+const chart = shallowRef(null); // Use shallowRef for non-reactive objects
 
-// Use refs for data to control reactivity better
-const chartData = ref([]);
-const chartOptions = ref(getChartOptions(props.timeframe));
+// Reactive references to store state (direct access, no props)
+const selectedTimeframe = ref(priceStore.state.selectedTimeframe);
+const connectionStatus = ref(priceStore.state.connectionStatus);
+const currentPrice = ref(priceStore.state.currentPrice);
+const priceChange = ref(priceStore.state.priceChange);
+const isPositiveChange = ref(priceStore.state.isPositiveChange);
+const isLoading = ref(priceStore.state.isLoading);
+const availableTimeframes = ref(timeframes);
 
-// Debounce flag to prevent too frequent updates
-let debounceTimer = null;
+// Track if component is mounted to prevent updates after unmount
+let isMounted = false;
+let updateTimer = null;
 
-// Create chart data - only run this when necessary
-const updateChartData = () => {
-  // Cancel any pending updates
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-  }
+// Change timeframe and reload data
+const changeTimeframe = (timeframe) => {
+  if (selectedTimeframe.value === timeframe) return;
 
-  // Debounce the update
-  debounceTimer = setTimeout(() => {
-    try {
-      chartData.value = props.candles;
-
-      // Update chart options if chart is mounted
-      if (chart.value) {
-        updateChartOptions();
-      }
-    } catch (error) {
-      console.error("Error updating chart data:", error);
-    }
-  }, 100); // Small delay to batch updates
+  selectedTimeframe.value = timeframe;
+  priceStore.setTimeframe(timeframe);
 };
 
-// Update chart options - use a dedicated function
-const updateChartOptions = async () => {
+// Initialize the chart with current data
+const initializeChart = () => {
+  if (!chartRef.value || !isMounted) return;
+
   try {
-    if (!chart.value || !chart.value.chart) return;
+    // Get limited candles directly from store (no separate function call to format)
+    const storeCandles = priceStore.getCandles() || [];
+    const candles = storeCandles.slice(-MAX_CANDLES).map((candle) => ({
+      x: new Date(candle.x),
+      y: candle.y,
+    }));
 
-    const newOptions = getChartOptions(props.timeframe, chartData.value);
+    // Setup chart with initial options
+    const options = {
+      ...getChartOptions(selectedTimeframe.value, candles),
+      series: [
+        {
+          name: "Price",
+          data: candles,
+        },
+      ],
+    };
 
-    // Only update if we need to
-    chart.value.updateOptions(newOptions, false, true, true);
-  } catch (error) {
-    console.error("Error updating chart options:", error);
+    // Create chart instance
+    chart.value = new ApexCharts(chartRef.value, options);
+    chart.value.render();
+
+    // Connect to live data
+    if (connectionStatus.value !== "Connected") {
+      priceStore.connectToLiveData();
+    }
+  } catch (err) {
+    console.error("Error initializing chart:", err);
   }
 };
 
-// Watch for candles changes, but only if reference changes
-watch(
-  () => props.candles,
-  (newCandles) => {
-    updateChartData();
+// Update chart data (debounced to prevent too many updates)
+const updateChartData = () => {
+  if (updateTimer) {
+    clearTimeout(updateTimer);
   }
-);
+
+  updateTimer = setTimeout(() => {
+    if (!chart.value || !isMounted) return;
+
+    try {
+      // Get limited candles directly from store
+      const storeCandles = priceStore.getCandles() || [];
+      const candles = storeCandles.slice(-MAX_CANDLES).map((candle) => ({
+        x: new Date(candle.x),
+        y: candle.y,
+      }));
+
+      // Only update if we have data
+      if (candles.length > 0) {
+        chart.value.updateSeries([
+          {
+            name: "Price",
+            data: candles,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Error updating chart data:", err);
+    }
+  }, 100); // 100ms debounce
+};
+
+// Update chart options when timeframe changes
+const updateChartOptions = () => {
+  if (!chart.value || !isMounted) return;
+
+  try {
+    // Get limited data directly from store
+    const storeCandles = priceStore.getCandles() || [];
+    const candles = storeCandles.slice(-MAX_CANDLES).map((candle) => ({
+      x: new Date(candle.x),
+      y: candle.y,
+    }));
+
+    // Update options
+    const options = getChartOptions(selectedTimeframe.value, candles);
+    chart.value.updateOptions(options, false, true);
+  } catch (err) {
+    console.error("Error updating chart options:", err);
+  }
+};
+
+// Set up watchers
+
+// Create a simple update trigger to watch for store changes
+const updateTrigger = ref(0);
+
+// Set up an interval to check for store changes
+let storeCheckInterval = null;
+const startStoreWatcher = () => {
+  // Check for changes every 1000ms (1 second)
+  storeCheckInterval = setInterval(() => {
+    updateTrigger.value++;
+  }, 1000);
+};
+
+// Watch the update trigger to refresh the chart
+watch(updateTrigger, () => {
+  updateChartData();
+
+  // Update UI state values
+  currentPrice.value = priceStore.state.currentPrice;
+  priceChange.value = priceStore.state.priceChange;
+  isPositiveChange.value = priceStore.state.isPositiveChange;
+  connectionStatus.value = priceStore.state.connectionStatus;
+  isLoading.value = priceStore.state.isLoading;
+});
 
 // Watch for timeframe changes
 watch(
-  () => props.timeframe,
-  (newTimeframe) => {
-    try {
-      if (!chart.value) return;
-
-      // Update options first
-      chartOptions.value = getChartOptions(newTimeframe, chartData.value);
-
-      // Then update the chart
-      nextTick(() => {
-        updateChartOptions();
-      });
-    } catch (error) {
-      console.error("Error handling timeframe change:", error);
-    }
+  () => selectedTimeframe.value,
+  () => {
+    updateChartOptions();
   }
 );
 
-// Initialize chart data when mounted
+// Watch connection status for display updates
+watch(
+  () => priceStore.state.connectionStatus,
+  (newStatus) => {
+    connectionStatus.value = newStatus;
+  }
+);
+
+// Watch loading state
+watch(
+  () => priceStore.state.isLoading,
+  (newState) => {
+    isLoading.value = newState;
+  }
+);
+
+// Lifecycle hooks
 onMounted(() => {
-  updateChartData();
+  isMounted = true;
+
+  // Load available timeframes
+  priceStore.loadAvailableTimeframes().then((result) => {
+    if (result && result.length > 0) {
+      availableTimeframes.value = result.map((tf) => {
+        const existing = timeframes.find((item) => item.value === tf);
+        return existing || { label: tf, value: tf };
+      });
+    }
+  });
+
+  // Initialize chart on next tick
+  nextTick(() => {
+    initializeChart();
+    startStoreWatcher();
+  });
 });
 
-// Save chart reference when chart is mounted
-const onChartMounted = (chartContext) => {
-  chart.value = chartContext;
+onUnmounted(() => {
+  isMounted = false;
 
-  // Initial update with proper data
-  nextTick(() => {
-    updateChartOptions();
-  });
-};
-
-// Clean up when component is unmounted
-onBeforeUnmount(() => {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
+  // Clean up resources
+  if (updateTimer) {
+    clearTimeout(updateTimer);
+    updateTimer = null;
   }
+
+  if (storeCheckInterval) {
+    clearInterval(storeCheckInterval);
+    storeCheckInterval = null;
+  }
+
+  if (chart.value) {
+    chart.value.destroy();
+    chart.value = null;
+  }
+
+  // Disconnect from WebSocket
+  priceStore.disconnect();
 });
 </script>
 
 <style scoped>
-.chart-wrapper {
-  margin: 20px 0;
-  height: 450px;
-  border-radius: 4px;
+.chart-container {
+  position: relative;
+  width: 95%;
+  height: 500px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  padding: 16px;
   overflow: hidden;
-  background-color: #f9f9f9;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-.loading {
+.chart {
+  width: 100%;
+  height: calc(100% - 80px);
+  margin-top: 12px;
+}
+
+.timeframe-selector {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.timeframe-selector button {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.timeframe-selector button.active {
+  background-color: #2c3e50;
+  color: white;
+  border-color: #2c3e50;
+}
+
+.connection-status {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.connection-status.connected {
+  background-color: rgba(38, 166, 154, 0.2);
+  color: #26a69a;
+}
+
+.connection-status.connecting {
+  background-color: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+}
+
+.connection-status.disconnected {
+  background-color: rgba(239, 83, 80, 0.2);
+  color: #ef5350;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
   height: 100%;
-  color: #666;
-  font-size: 16px;
+  background-color: rgba(255, 255, 255, 0.8);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 10;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-left-color: #2c3e50;
+  animation: spin 1s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 </style>

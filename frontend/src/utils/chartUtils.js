@@ -1,13 +1,4 @@
 /**
- * Format price with dollar sign and 2 decimal places
- * @param {Number} price - Price to format
- * @returns {String} Formatted price
- */
-export const formatPrice = (price) => {
-  return `$${price.toFixed(2)}`;
-};
-
-/**
  * Get chart options for the selected timeframe
  * @param {String} timeframe - Selected timeframe (1m, 5m, 15m, 1h, 4h, 1d)
  * @param {Array} data - Candle data
@@ -226,8 +217,8 @@ function getTimeRange(minMaxTimes, timeframe) {
 export const calculatePriceChange = (candle) => {
   if (!candle || !candle.y) {
     return {
-      currentPrice: "$0.00",
-      priceChange: "$0.00 (0.00%)",
+      currentPrice: "0.00",
+      priceChange: "0.00 (0.00%)",
       isPositive: false,
     };
   }
@@ -242,15 +233,15 @@ export const calculatePriceChange = (candle) => {
 
   if (Math.abs(change) > 0.001) {
     const sign = change > 0 ? "+" : "";
-    priceChangeText = `${sign}$${change.toFixed(
+    priceChangeText = `${sign}${change.toFixed(
       2
     )} (${sign}${changePercent.toFixed(2)}%)`;
   } else {
-    priceChangeText = "$0.00 (0.00%)";
+    priceChangeText = "0.00 (0.00%)";
   }
 
   return {
-    currentPrice: formatPrice(closePrice),
+    currentPrice: closePrice.toFixed(2),
     priceChange: priceChangeText,
     isPositive: change > 0,
   };
