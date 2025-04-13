@@ -275,6 +275,7 @@ onUnmounted(() => {
   border: 1px solid #ddd;
   background-color: #f8f9fa;
   border-radius: 4px;
+  color: #333;
   cursor: pointer;
   font-size: 14px;
 }

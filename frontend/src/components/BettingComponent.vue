@@ -105,7 +105,7 @@ function formatNumber(num) {
         stack: new Error().stack,
       }
     );
-    return "0.00";
+    return 0;
   }
 
   // Convert to number if it's a string
@@ -119,7 +119,7 @@ function formatNumber(num) {
       type: typeof num,
       stack: new Error().stack,
     });
-    return "0.00";
+    return 0;
   }
 
   // Check for zero values (might be a critical error in some contexts)
@@ -258,7 +258,7 @@ function calculateProfit(bet) {
           stack: new Error().stack,
         }
       );
-      return "0.00";
+      return 0;
     }
 
     // Parse current price and bet price to ensure they're numbers
@@ -273,7 +273,7 @@ function calculateProfit(bet) {
         parsedPrice: betPrice,
         stack: new Error().stack,
       });
-      return "0.00";
+      return 0;
     }
 
     if (isNaN(betPrice) || isNaN(betAmount) || isNaN(currentPriceValue)) {
@@ -287,7 +287,7 @@ function calculateProfit(bet) {
         },
         stack: new Error().stack,
       });
-      return "0.00";
+      return 0;
     }
 
     // Calculate the difference
@@ -310,7 +310,7 @@ function calculateProfit(bet) {
       currentPrice: currentPrice.value,
       stack: error.stack,
     });
-    return "0.00";
+    return 0;
   }
 }
 
@@ -383,28 +383,6 @@ function closeBet(index) {
       newCash: cash.value,
     });
 
-    if (isNaN(cash.value)) {
-      console.error("CRITICAL ERROR: Cash became NaN after closing bet", {
-        oldCash,
-        returnAmount,
-        newCash: cash.value,
-        stack: new Error().stack,
-      });
-      // Try to recover
-      cash.value = oldCash;
-      message.value = "Error: Invalid calculation when closing bet.";
-      return;
-    }
-
-    if (cash.value === 0 || cash.value === 0.0) {
-      console.warn("Cash is zero after closing bet", {
-        oldCash,
-        returnAmount,
-        bet,
-        stack: new Error().stack,
-      });
-    }
-
     // Show result message
     message.value = `Closed ${bet.type} bet with ${
       profit >= 0 ? "profit" : "loss"
@@ -432,39 +410,6 @@ function getProfitClass(profitStr) {
     "profit-neutral": profit === 0 || isNaN(profit),
   };
 }
-
-// Debug watcher to log current price changes
-watch(currentPrice, (newVal, oldVal) => {
-  if (newVal === "0" || newVal === "0.00" || newVal === 0 || newVal === 0.0) {
-    console.error("CRITICAL ERROR: Current price changed to zero", {
-      oldValue: oldVal,
-      newValue: newVal,
-      raw: rawCurrentPrice.value,
-      stack: new Error().stack,
-    });
-  }
-});
-
-// Monitor cash value for debugging
-watch(cash, (newVal, oldVal) => {
-  if (newVal === 0 || newVal === 0.0) {
-    console.error("CRITICAL ERROR: Cash value became zero", {
-      oldValue: oldVal,
-      newValue: newVal,
-      stack: new Error().stack,
-    });
-  }
-
-  if (isNaN(newVal)) {
-    console.error("CRITICAL ERROR: Cash value became NaN", {
-      oldValue: oldVal,
-      newValue: newVal,
-      stack: new Error().stack,
-    });
-    // Try to recover
-    cash.value = oldVal || 100;
-  }
-});
 </script>
 
 <style scoped>
