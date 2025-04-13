@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strconv"
 
 	"server/internal/models"
 	"server/internal/service"
@@ -44,38 +43,8 @@ func (h *PriceHandler) HandleHistoricalData(w http.ResponseWriter, r *http.Reque
 		timeFrame = models.TimeFrame(timeFrameStr)
 	}
 
-	// Get optional from/to parameters (Unix timestamp in milliseconds)
-	var from, to int64
-	var err error
-
-	if fromStr := r.URL.Query().Get("from"); fromStr != "" {
-		from, err = strconv.ParseInt(fromStr, 10, 64)
-		if err != nil {
-			http.Error(w, "Invalid 'from' parameter", http.StatusBadRequest)
-			return
-		}
-	}
-
-	if toStr := r.URL.Query().Get("to"); toStr != "" {
-		to, err = strconv.ParseInt(toStr, 10, 64)
-		if err != nil {
-			http.Error(w, "Invalid 'to' parameter", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Get optional limit parameter
-	limit := 0
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		limit, err = strconv.Atoi(limitStr)
-		if err != nil {
-			http.Error(w, "Invalid 'limit' parameter", http.StatusBadRequest)
-			return
-		}
-	}
-
 	// Get historical data for the requested timeframe
-	history := h.priceService.GetHistoryForTimeFrame(timeFrame, from, to, limit)
+	history := h.priceService.GetHistoryForTimeFrame(timeFrame)
 
 	response := models.TimeFrameData{
 		TimeFrame: timeFrame,
@@ -170,12 +139,7 @@ func (h *PriceHandler) HandleWebsocketSubscribe(w http.ResponseWriter, r *http.R
 					log.Printf("Client requested timeframe change to %s", request.TimeFrame)
 
 					// Send the initial data for the new timeframe
-					history := h.priceService.GetHistoryForTimeFrame(
-						request.TimeFrame,
-						request.From,
-						request.To,
-						request.Limit,
-					)
+					history := h.priceService.GetHistoryForTimeFrame(request.TimeFrame)
 
 					response := models.TimeFrameData{
 						TimeFrame: request.TimeFrame,

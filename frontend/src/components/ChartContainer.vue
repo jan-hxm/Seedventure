@@ -18,7 +18,7 @@
 
 <script setup>
 import { ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
-import { getChartOptions, processCandles } from "../utils/chartUtils.js";
+import { getChartOptions } from "../utils/chartUtils.js";
 
 // Props definition
 const props = defineProps({
@@ -57,8 +57,7 @@ const updateChartData = () => {
   // Debounce the update
   debounceTimer = setTimeout(() => {
     try {
-      // Process candles - this might include sampling for large datasets
-      chartData.value = processCandles(props.candles, props.timeframe);
+      chartData.value = props.candles;
 
       // Update chart options if chart is mounted
       if (chart.value) {

@@ -7,66 +7,6 @@ export const formatPrice = (price) => {
   return `$${price.toFixed(2)}`;
 };
 
-// Cache for candle data
-const candleCache = {
-  timeframe: null,
-  timestamp: 0,
-  result: [],
-};
-
-/**
- * Process candles from the backend, with optional light filtering for specific views
- * @param {Array} candles - Candles from the backend
- * @param {String} timeframe - Timeframe of the candles (1m, 5m, 15m, 1h, 4h, 1d)
- * @returns {Array} Processed candle data
- */
-export const processCandles = (candles, timeframe) => {
-  if (!candles || candles.length === 0) return [];
-
-  const now = Date.now();
-
-  // For large datasets, we might want to sample the data
-  // This is a performance optimization only - the backend already has the right resolution
-  let processedCandles = candles;
-
-  if (candles.length > 100) {
-    // Only sample for extremely large datasets
-    processedCandles = sampleLargeDataset(candles);
-  }
-
-  // Update cache
-  candleCache.timeframe = timeframe;
-  candleCache.timestamp = now;
-  candleCache.result = processedCandles;
-
-  return processedCandles;
-};
-
-/**
- * Sample large datasets for better client-side performance
- * @param {Array} candles - Candles to sample
- * @returns {Array} Sampled candles
- */
-function sampleLargeDataset(candles) {
-  // Always include the most recent candles
-  const recentCount = 100; // Keep more recent candles for accuracy
-  const recentCandles = candles.slice(-recentCount);
-
-  // Sample older candles if we have a very large dataset
-  if (candles.length <= recentCount) return candles;
-
-  const olderCandles = candles.slice(0, -recentCount);
-  const sampleRate = Math.max(1, Math.floor(olderCandles.length / 500));
-
-  const sampledOlderCandles =
-    sampleRate > 1
-      ? olderCandles.filter((_, i) => i % sampleRate === 0)
-      : olderCandles;
-
-  // Combine sampled older candles with recent candles
-  return [...sampledOlderCandles, ...recentCandles];
-}
-
 /**
  * Get chart options for the selected timeframe
  * @param {String} timeframe - Selected timeframe (1m, 5m, 15m, 1h, 4h, 1d)
@@ -82,26 +22,17 @@ export const getChartOptions = (timeframe, data = []) => {
       fontFamily: "Helvetica, Arial, sans-serif",
       background: "#f8f9fa",
       animations: {
-        enabled: data.length < 100, // Only enable animations for small datasets
+        enabled: true,
         easing: "linear",
         dynamicAnimation: {
           speed: 350,
         },
       },
       toolbar: {
-        show: true,
-        tools: {
-          download: true,
-          selection: true,
-          zoom: true,
-          zoomin: true,
-          zoomout: true,
-          pan: true,
-          reset: true,
-        },
+        show: false,
       },
       zoom: {
-        enabled: true,
+        enabled: false,
       },
     },
     xaxis: {
@@ -110,10 +41,12 @@ export const getChartOptions = (timeframe, data = []) => {
         formatter: getFormatterForTimeframe(timeframe),
         datetimeUTC: false,
       },
-      tickAmount: getTickAmount(timeframe, data),
+      tickAmount: 5,
     },
     yaxis: {
-      tooltip: { enabled: true },
+      tooltip: {
+        enabled: false,
+      },
       labels: {
         formatter: function (val) {
           return "$" + val.toFixed(2);
@@ -131,15 +64,7 @@ export const getChartOptions = (timeframe, data = []) => {
       },
     },
     tooltip: {
-      theme: "dark",
-      x: {
-        format: getTooltipFormat(timeframe),
-      },
-      y: {
-        formatter: function (val) {
-          return "$" + val.toFixed(2);
-        },
-      },
+      enabled: false,
     },
     grid: {
       borderColor: "#e0e0e0",
@@ -167,7 +92,8 @@ export const getChartOptions = (timeframe, data = []) => {
   // Only add time range if we have data
   if (data.length > 0) {
     // Calculate appropriate time range with padding
-    const timeRange = getTimeRange(data, timeframe);
+    const minMaxTimes = getMinMaxTimes(data);
+    const timeRange = getTimeRange(minMaxTimes, timeframe);
     if (timeRange) {
       baseOptions.xaxis = {
         ...baseOptions.xaxis,
@@ -179,6 +105,29 @@ export const getChartOptions = (timeframe, data = []) => {
 
   return baseOptions;
 };
+
+/**
+ * Get min and max times from data efficiently
+ * @param {Array} data - Candle data
+ * @returns {Object} Min and max times
+ */
+function getMinMaxTimes(data) {
+  if (!data || data.length === 0) {
+    return { min: 0, max: 0 };
+  }
+
+  let min = data[0].x;
+  let max = data[0].x;
+
+  // Manual iteration is more efficient than using Math.min/max with spread
+  for (let i = 1; i < data.length; i++) {
+    const timestamp = data[i].x;
+    if (timestamp < min) min = timestamp;
+    if (timestamp > max) max = timestamp;
+  }
+
+  return { min, max };
+}
 
 /**
  * Get appropriate X-axis formatter for timeframe
@@ -221,70 +170,24 @@ function getFormatterForTimeframe(timeframe) {
     default:
       return function (val) {
         return new Date(val).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
         });
       };
   }
 }
 
 /**
- * Get tooltip date format for timeframe
- * @param {String} timeframe - Selected timeframe
- * @returns {String} Date format string
- */
-function getTooltipFormat(timeframe) {
-  switch (timeframe) {
-    case "1m":
-    case "5m":
-    case "15m":
-      return "MMM dd, yyyy HH:mm:ss";
-    case "1h":
-    case "4h":
-      return "MMM dd, yyyy HH:mm";
-    case "1d":
-      return "MMM dd, yyyy";
-    default:
-      return "MMM dd, yyyy";
-  }
-}
-
-/**
- * Calculate appropriate tick amount based on timeframe and data size
- * @param {String} timeframe - Selected timeframe
- * @param {Array} data - Chart data
- * @returns {Number} Tick amount
- */
-function getTickAmount(timeframe, data) {
-  // Default to 6 ticks
-  let tickAmount = 6;
-
-  // For large datasets, use fewer ticks
-  if (data.length > 200) {
-    return 5;
-  }
-
-  // For minute-level timeframes, use more ticks
-  if (timeframe === "1m" || timeframe === "5m") {
-    return 8;
-  }
-
-  return tickAmount;
-}
-
-/**
  * Calculate appropriate time range for chart
- * @param {Array} data - Chart data
+ * @param {Object} minMaxTimes - Min and max times
  * @param {String} timeframe - Selected timeframe
  * @returns {Object|null} Time range min and max
  */
-function getTimeRange(data, timeframe) {
-  if (!data || data.length === 0) return null;
+function getTimeRange(minMaxTimes, timeframe) {
+  if (!minMaxTimes || minMaxTimes.min === 0) return null;
 
-  // Calculate min and max times
-  const times = data.map((d) => d.x);
-  let minTime = Math.min(...times);
-  let maxTime = Math.max(...times);
+  let minTime = minMaxTimes.min;
+  let maxTime = minMaxTimes.max;
 
   // Add padding based on timeframe
   let padding = 0;

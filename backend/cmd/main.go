@@ -5,7 +5,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
 	"time"
 
 	"server/internal/api"
@@ -19,14 +18,8 @@ func main() {
 	// Seed the random number generator
 	rand.Seed(time.Now().UnixNano())
 
-	// Create data directory if it doesn't exist
-	dataDir := "data"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Fatalf("Failed to create data directory: %v", err)
-	}
-
 	// Create and initialize price service
-	priceService := service.NewPriceService(dataDir)
+	priceService := service.NewPriceService()
 
 	// Try to load historical data from files
 	if err := priceService.LoadAllTimeFrames(); err != nil {

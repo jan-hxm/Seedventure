@@ -32,12 +32,9 @@ type UpdateMessage struct {
 	TimeFrame TimeFrame  `json:"timeFrame,omitempty"` // The timeframe of the candle
 }
 
-// TimeFrameRequest represents a request for historical data with a specific timeframe
+// TimeFrameRequest represents a request for historical data
 type TimeFrameRequest struct {
 	TimeFrame TimeFrame `json:"timeFrame"`
-	From      int64     `json:"from,omitempty"`  // Optional start timestamp (Unix milliseconds)
-	To        int64     `json:"to,omitempty"`    // Optional end timestamp (Unix milliseconds)
-	Limit     int       `json:"limit,omitempty"` // Optional limit on number of candles
 }
 
 // TimeFrameData represents all historical data for a specific timeframe
